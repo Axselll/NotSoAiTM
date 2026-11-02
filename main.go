@@ -166,12 +166,16 @@ func restore(parent context.Context, o opts) error {
 }
 
 func browser(parent context.Context, profile string) (context.Context, context.CancelFunc) {
-	opts := []chromedp.ContextOption{chromedp.WithVisibleWindow(), remote.WithKeepOpen()}
+	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", false),
+	)
 	if profile != "" {
 		abs, _ := filepath.Abs(profile)
-		opts = append(opts, chromedp.UserDataDir(abs))
+		allocOpts = append(allocOpts, chromedp.UserDataDir(abs))
 	}
-	return chromedp.NewContext(parent, opts...)
+	allocCtx, allocCancel := chromedp.NewExecAllocator(parent, allocOpts...)
+	ctx, ctxCancel := chromedp.NewContext(allocCtx, remote.WithKeepOpen())
+	return ctx, func() { ctxCancel(); allocCancel() }
 }
 
 func jsDump(store string) string {
