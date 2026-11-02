@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
@@ -27,13 +26,17 @@ type state struct {
 	SessionStorage map[string]string `json:"sessionStorage"`
 }
 
+type opts struct {
+	target, origin, path, profile, cookie string
+}
+
 func main() {
 	mode := flag.String("mode", "", "save | restore")
 	target := flag.String("url", "", "site URL, e.g. https://example.com/")
 	file := flag.String("state", "state.json", "state file path")
 	profile := flag.String("profile", "", "persistent browser profile dir (optional)")
 	cookie := flag.String("cookie", "", "auth cookie name to require on save (optional)")
-	timeout := flag.Duration("timeout", 5*time.Minute, "overall timeout")
+	timeout := flag.Duration("timeout", 0, "overall timeout (0 = none)")
 	flag.Parse()
 
 	u, err := url.Parse(*target)
@@ -50,15 +53,16 @@ func main() {
 		log.Fatal("-mode must be save or restore")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	ctx := context.Background()
+	cancel := context.CancelFunc(func() {})
+	if *timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+	}
 	defer cancel()
+
 	if err := run(ctx, opts{*target, origin, *file, *profile, *cookie}); err != nil {
 		log.Fatal(err)
 	}
-}
-
-type opts struct {
-	target, origin, path, profile, cookie string
 }
 
 func save(parent context.Context, o opts) error {
@@ -103,15 +107,6 @@ func save(parent context.Context, o opts) error {
 	}
 	fmt.Printf("✓ saved %d cookies → %s\n", len(res.Cookies), o.path)
 	return nil
-}
-
-func hasCookie(cookies []*network.Cookie, name string) bool {
-	for _, c := range cookies {
-		if c.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func restore(parent context.Context, o opts) error {
@@ -160,9 +155,18 @@ func restore(parent context.Context, o opts) error {
 	if err := chromedp.Do(ctx, chromedp.Navigate(o.target)); err != nil {
 		return fmt.Errorf("open %s: %w", o.target, err)
 	}
-	_, dir := chromedp.KeptOpen(ctx)
-	fmt.Printf("✓ session restored — window left open\n  profile: %s\n", dir)
+	fmt.Println("✓ session restored. Press Enter here to close the browser…")
+	bufio.NewReader(os.Stdin).ReadString('\n')
 	return nil
+}
+
+func hasCookie(cookies []*network.Cookie, name string) bool {
+	for _, c := range cookies {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func browser(parent context.Context, profile string) (context.Context, context.CancelFunc) {
